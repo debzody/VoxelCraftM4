@@ -143,9 +143,9 @@ final class Player {
         if collides(at: p, world: world) {
             if velocity.y < 0 {
                 onGround = true
-                // Apply fall damage if accumulated
-                if fallDistance > 3 {
-                    let dmg = Int(fallDistance - 3)
+                // Apply fall damage (capped) if accumulated
+                if fallDistance > 4 {
+                    let dmg = min(Int(fallDistance - 4), 12)  // cap at 12 HP per fall
                     if dmg > 0 { takeDamage(dmg) }
                 }
                 fallDistance = 0

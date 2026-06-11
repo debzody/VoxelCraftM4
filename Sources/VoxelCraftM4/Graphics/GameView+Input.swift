@@ -24,7 +24,7 @@ extension GameView {
         }
         // R (key 15) → respawn (also auto when dead long enough)
         if event.keyCode == 15 && player.isDead {
-            player.respawn()
+            respawnPlayerSafely()
         }
 
         // Hotbar 1..7 (keys 18..24)
@@ -151,9 +151,39 @@ extension GameView {
 
         player.physicsStep(dt: dt, wishDir: wish, jump: jump, sprinting: sprinting, world: world)
 
-        // Auto-respawn if dead for >2s and player presses anything (or just auto)
+        // Auto-respawn if dead for >2s
         if player.isDead && player.deathTimer > 3.0 {
-            player.respawn()
+            respawnPlayerSafely()
         }
+    }
+
+    /// Respawn the player on solid ground near the world origin (or last known safe spot).
+    /// Avoids the "falling from sky → fall damage" loop.
+    func respawnPlayerSafely() {
+        // Find a grass top (or any solid block) near origin
+        for r in 0..<60 {
+            for x in -r...r {
+                for z in -r...r {
+                    if abs(x) != r && abs(z) != r { continue }
+                    var y = Chunk.sizeY - 1
+                    while y > 0 && world.blockAt(x, y, z) == .air { y -= 1 }
+                    let topBlock = world.blockAt(x, y, z)
+                    if topBlock.isSolid && topBlock != .water {
+                        player.position = Float3(Float(x) + 0.5, Float(y + 1), Float(z) + 0.5)
+                        player.velocity = Float3(0, 0, 0)
+                        player.fallDistance = 0
+                        player.health = player.maxHealth
+                        player.deathTimer = 0
+                        player.onGround = true
+                        return
+                    }
+                }
+            }
+        }
+        // Fallback: just heal in place
+        player.health = player.maxHealth
+        player.velocity = Float3(0, 0, 0)
+        player.fallDistance = 0
+        player.deathTimer = 0
     }
 }
