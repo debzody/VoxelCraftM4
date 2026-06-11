@@ -7,7 +7,26 @@ extension GameView {
 
     override func keyDown(with event: NSEvent) {
         keysDown.insert(event.keyCode)
+
         if event.keyCode == 53 { releaseMouse() }   // ESC
+        // F (key 3) → toggle fly
+        if event.keyCode == 3 {
+            player.flying.toggle()
+            if player.flying { player.velocity = Float3(0,0,0) }
+        }
+        // F5 (key 96) → cycle camera mode  (also map to V which is key 9)
+        if event.keyCode == 96 || event.keyCode == 9 {
+            switch player.cameraMode {
+            case .first:      player.cameraMode = .thirdBack
+            case .thirdBack:  player.cameraMode = .thirdFront
+            case .thirdFront: player.cameraMode = .first
+            }
+        }
+        // R (key 15) → respawn (also auto when dead long enough)
+        if event.keyCode == 15 && player.isDead {
+            player.respawn()
+        }
+
         // Hotbar 1..7 (keys 18..24)
         let n = Int(event.keyCode) - 18
         if n >= 0 && n < hotbar.count { hotbarIndex = n; rebuildHUD() }
@@ -20,7 +39,7 @@ extension GameView {
 
     override func mouseDown(with event: NSEvent) {
         if !mouseCaptured { captureMouse(); return }
-        // Break block
+        if player.isDead { return }
         if let hit = Raycast.cast(origin: player.eyePos, direction: player.forward,
                                   maxDistance: 6, world: world) {
             setBlock(at: (hit.blockX, hit.blockY, hit.blockZ), to: .air)
@@ -29,15 +48,15 @@ extension GameView {
 
     override func rightMouseDown(with event: NSEvent) {
         if !mouseCaptured { captureMouse(); return }
-        // Place block on hit face
+        if player.isDead { return }
         guard let hit = Raycast.cast(origin: player.eyePos, direction: player.forward,
                                      maxDistance: 6, world: world) else { return }
         let nx = hit.blockX + hit.normal.x
         let ny = hit.blockY + hit.normal.y
         let nz = hit.blockZ + hit.normal.z
-        // Avoid placing into player's body
-        let pmin = Float3(player.position.x - 0.3, player.position.y, player.position.z - 0.3)
-        let pmax = Float3(player.position.x + 0.3, player.position.y + Player.height, player.position.z + 0.3)
+        // Avoid placing into player body
+        let pmin = Float3(player.position.x - Player.halfWidth, player.position.y, player.position.z - Player.halfWidth)
+        let pmax = Float3(player.position.x + Player.halfWidth, player.position.y + Player.height, player.position.z + Player.halfWidth)
         let bmin = Float3(Float(nx), Float(ny), Float(nz))
         let bmax = bmin + Float3(1, 1, 1)
         let overlap =
@@ -49,15 +68,9 @@ extension GameView {
         }
     }
 
-    override func mouseMoved(with event: NSEvent) {
-        handleMouseDelta(Float(event.deltaX), Float(event.deltaY))
-    }
-    override func mouseDragged(with event: NSEvent) {
-        handleMouseDelta(Float(event.deltaX), Float(event.deltaY))
-    }
-    override func rightMouseDragged(with event: NSEvent) {
-        handleMouseDelta(Float(event.deltaX), Float(event.deltaY))
-    }
+    override func mouseMoved(with event: NSEvent)        { handleMouseDelta(Float(event.deltaX), Float(event.deltaY)) }
+    override func mouseDragged(with event: NSEvent)      { handleMouseDelta(Float(event.deltaX), Float(event.deltaY)) }
+    override func rightMouseDragged(with event: NSEvent) { handleMouseDelta(Float(event.deltaX), Float(event.deltaY)) }
 
     private func handleMouseDelta(_ dx: Float, _ dy: Float) {
         guard mouseCaptured else { return }
@@ -69,31 +82,17 @@ extension GameView {
     }
 
     func captureMouse() {
-        if !mouseCaptured {
-            NSCursor.hide()
-            CGAssociateMouseAndMouseCursorPosition(0)
-            mouseCaptured = true
-        }
+        if !mouseCaptured { NSCursor.hide(); CGAssociateMouseAndMouseCursorPosition(0); mouseCaptured = true }
     }
-
     func releaseMouse() {
-        if mouseCaptured {
-            NSCursor.unhide()
-            CGAssociateMouseAndMouseCursorPosition(1)
-            mouseCaptured = false
-        }
+        if mouseCaptured { NSCursor.unhide(); CGAssociateMouseAndMouseCursorPosition(1); mouseCaptured = false }
     }
-
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
         for ta in trackingAreas { removeTrackingArea(ta) }
-        let area = NSTrackingArea(
-            rect: bounds,
-            options: [.activeAlways, .mouseMoved, .inVisibleRect],
-            owner: self,
-            userInfo: nil
-        )
-        addTrackingArea(area)
+        addTrackingArea(NSTrackingArea(rect: bounds,
+                                       options: [.activeAlways, .mouseMoved, .inVisibleRect],
+                                       owner: self, userInfo: nil))
     }
 
     // MARK: - Block edit
@@ -113,21 +112,40 @@ extension GameView {
         if lz == Chunk.sizeZ - 1    { rebuildOneChunk(SIMD2<Int>(cx, cz + 1)) }
     }
 
-    // MARK: - Player movement update
+    // MARK: - Player update (called every frame)
 
     func updatePlayer(dt: Float) {
-        var move = Float3(0, 0, 0)
-        // W=13 S=1 A=0 D=2 Space=49 Shift=56 C=8 (FlyDown)
-        if keysDown.contains(13) { move += player.forward }
-        if keysDown.contains(1)  { move -= player.forward }
-        if keysDown.contains(2)  { move += player.right }
-        if keysDown.contains(0)  { move -= player.right }
-        if keysDown.contains(49) { move += Float3(0, 1, 0) }
-        if keysDown.contains(8)  { move -= Float3(0, 1, 0) }
-        if length(move) > 0.0001 {
-            move = normalize(move)
-            let speed: Float = keysDown.contains(56) ? 30 : 12
-            player.position += move * speed * dt
+        // Build a horizontal-plane wish direction from WASD relative to player yaw
+        let fwdFlat = Float3(sin(player.yaw), 0, -cos(player.yaw))
+        let rightFlat = Float3(cos(player.yaw), 0, sin(player.yaw))
+        var wish = Float3(0, 0, 0)
+        if keysDown.contains(13) { wish += fwdFlat }     // W
+        if keysDown.contains(1)  { wish -= fwdFlat }     // S
+        if keysDown.contains(2)  { wish += rightFlat }   // D
+        if keysDown.contains(0)  { wish -= rightFlat }   // A
+
+        // In flying mode, use full 3D wish (forward including pitch + WASD verticals)
+        if player.flying {
+            wish = Float3(0, 0, 0)
+            if keysDown.contains(13) { wish += player.forward }
+            if keysDown.contains(1)  { wish -= player.forward }
+            if keysDown.contains(2)  { wish += player.right }
+            if keysDown.contains(0)  { wish -= player.right }
+            if keysDown.contains(49) { wish += Float3(0, 1, 0) }    // Space up
+            if keysDown.contains(8)  { wish -= Float3(0, 1, 0) }    // C down
+            if length(wish) > 0.0001 { wish = normalize(wish) }
+        } else {
+            if length(wish) > 0.0001 { wish = normalize(wish) }
+        }
+
+        let jump = keysDown.contains(49)               // Space
+        let sprinting = keysDown.contains(56)          // Left Shift
+
+        player.physicsStep(dt: dt, wishDir: wish, jump: jump, sprinting: sprinting, world: world)
+
+        // Auto-respawn if dead for >2s and player presses anything (or just auto)
+        if player.isDead && player.deathTimer > 3.0 {
+            player.respawn()
         }
     }
 }

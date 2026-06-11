@@ -21,10 +21,36 @@ extension GameView {
         let cw: Float = 0.012   // half-width in NDC
         let ch: Float = 0.002   // half-thickness
         let crossColor = SIMD4<Float>(0.95, 0.95, 0.95, 0.85)
-        // Horizontal bar
-        appendQuad(&v, x0: -cw, y0: -ch, x1:  cw, y1:  ch, color: crossColor)
-        // Vertical bar
-        appendQuad(&v, x0: -ch, y0: -cw, x1:  ch, y1:  cw, color: crossColor)
+        // Hide crosshair when dead (red overlay instead)
+        if !player.isDead {
+            appendQuad(&v, x0: -cw, y0: -ch, x1:  cw, y1:  ch, color: crossColor)
+            appendQuad(&v, x0: -ch, y0: -cw, x1:  ch, y1:  cw, color: crossColor)
+        } else {
+            // Red death overlay
+            appendQuad(&v, x0: -1, y0: -1, x1: 1, y1: 1, color: SIMD4<Float>(0.7, 0.05, 0.05, 0.45))
+        }
+
+        // ---------- Health bar (above hotbar) ----------
+        let hbX: Float = -0.30
+        let hbY: Float = -0.78
+        let hbW: Float = 0.60
+        let hbH: Float = 0.04
+        // Bar background
+        appendQuad(&v, x0: hbX - 0.01, y0: hbY - 0.01,
+                       x1: hbX + hbW + 0.01, y1: hbY + hbH + 0.01,
+                       color: SIMD4<Float>(0, 0, 0, 0.55))
+        // Filled portion based on health
+        let frac = Float(player.health) / Float(player.maxHealth)
+        let fillColor: SIMD4<Float> = frac > 0.5 ?
+            SIMD4<Float>(0.85, 0.15, 0.20, 0.95) :   // red heart
+            SIMD4<Float>(0.95, 0.45, 0.10, 0.95)     // orange when low
+        appendQuad(&v, x0: hbX, y0: hbY, x1: hbX + hbW * max(0, frac), y1: hbY + hbH, color: fillColor)
+        // 10 segment ticks
+        for i in 1..<10 {
+            let tx = hbX + hbW * Float(i) / 10.0
+            appendQuad(&v, x0: tx - 0.0015, y0: hbY, x1: tx + 0.0015, y1: hbY + hbH,
+                       color: SIMD4<Float>(0, 0, 0, 0.6))
+        }
 
         // ---------- Hotbar ----------
         let slotCount = hotbar.count

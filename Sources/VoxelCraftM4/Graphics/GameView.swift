@@ -90,6 +90,25 @@ final class GameView: MTKView {
         world.generate()
         print(String(format: "World generated in %.2fs", CACurrentMediaTime() - t0))
         rebuildChunkBuffers()
+        spawnPlayerOnTerrain()
+    }
+
+    private func spawnPlayerOnTerrain() {
+        // Find a grass top near origin and drop player on it
+        for r in 0..<30 {
+            for x in -r...r {
+                for z in -r...r {
+                    if abs(x) != r && abs(z) != r { continue }
+                    var y = Chunk.sizeY - 1
+                    while y > 0 && world.blockAt(x, y, z) == .air { y -= 1 }
+                    if world.blockAt(x, y, z) == .grass {
+                        player.position = Float3(Float(x) + 0.5, Float(y + 1), Float(z) + 0.5)
+                        player.velocity = Float3(0, 0, 0)
+                        return
+                    }
+                }
+            }
+        }
     }
 
     func rebuildChunkBuffers() {

@@ -16,10 +16,20 @@ extension GameView: MTKViewDelegate {
         frameCount += 1
         if fpsAccumTime >= 1.0 {
             let fps = Double(frameCount) / fpsAccumTime
+            let modeStr: String = {
+                switch player.cameraMode {
+                case .first: return "1st"
+                case .thirdBack: return "3rd-back"
+                case .thirdFront: return "3rd-front"
+                }
+            }()
+            let stateStr = player.isDead ? "💀 DEAD (R/auto-respawn)"
+                          : player.flying ? "✈ FLY"
+                          : (player.onGround ? "🚶 GROUND" : "🪂 AIR")
             window?.title = String(format:
-                "VoxelCraft M4 — %.0f FPS — pos (%.1f, %.1f, %.1f) — block: %@",
-                fps, player.position.x, player.position.y, player.position.z,
-                "\(hotbar[hotbarIndex])")
+                "VoxelCraft M4 — %.0f FPS — HP %d/%d — %@ — view: %@ — block: %@",
+                fps, player.health, player.maxHealth,
+                stateStr, modeStr, "\(hotbar[hotbarIndex])")
             fpsAccumTime = 0
             frameCount = 0
         }
@@ -27,6 +37,7 @@ extension GameView: MTKViewDelegate {
         updatePlayer(dt: dt)
         updateCows(dt: dt)
         updateSelection()
+        rebuildHUD()
 
         guard let drawable = view.currentDrawable,
               let rpd = view.currentRenderPassDescriptor,

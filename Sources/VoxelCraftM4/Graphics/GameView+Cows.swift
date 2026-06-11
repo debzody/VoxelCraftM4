@@ -28,8 +28,12 @@ extension GameView {
     func rebuildEntityMesh() {
         guard let device = self.device else { return }
         var verts: [Vertex] = []
-        verts.reserveCapacity(cows.count * 200)
+        verts.reserveCapacity(cows.count * 200 + 300)
         for c in cows { c.appendMesh(into: &verts) }
+        // Include the player body when not in first-person view
+        if player.cameraMode != .first {
+            PlayerMesh.build(player: player, into: &verts)
+        }
         entityVertexCount = verts.count
         if verts.isEmpty { entityBuffer = nil; return }
         let length = verts.count * MemoryLayout<Vertex>.stride
