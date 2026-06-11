@@ -9,10 +9,10 @@ struct Vertex {
 
 final class Chunk {
     static let sizeX = 16
-    static let sizeY = 80
+    static let sizeY = 96
     static let sizeZ = 16
-    static let seaLevel = 22
-    static let snowLevel = 46
+    static let seaLevel = 32
+    static let snowLevel = 70
 
     let coord: SIMD2<Int>
     var blocks: [BlockType]
@@ -41,19 +41,24 @@ final class Chunk {
         meshDirty = true
     }
 
+    // MARK: - Generation
+
     func generateTerrain(seed: UInt32) {
         let baseX = coord.x * Chunk.sizeX
         let baseZ = coord.y * Chunk.sizeZ
 
-        // 1) Heightmap + base layers
+        // Heightmap with biome blending
         var heights = [[Int]](repeating: [Int](repeating: 0, count: Chunk.sizeZ), count: Chunk.sizeX)
+        var biomes  = [[Biome]](repeating: [Biome](repeating: .plains, count: Chunk.sizeZ), count: Chunk.sizeX)
+
         for x in 0..<Chunk.sizeX {
             for z in 0..<Chunk.sizeZ {
                 let wx = Float(baseX + x)
                 let wz = Float(baseZ + z)
-                let h = heightAt(wx, wz, seed: seed)
+                let (h, b) = heightAndBiomeAt(wx, wz, seed: seed)
                 let height = max(1, min(Chunk.sizeY - 2, Int(h)))
                 heights[x][z] = height
+                biomes[x][z] = b
 
                 for y in 0..<Chunk.sizeY {
                     if y > height {
@@ -63,15 +68,26 @@ final class Chunk {
                             blocks[Chunk.index(x, y, z)] = .air
                         }
                     } else if y == height {
+                        // Top block depends on biome and altitude
                         if height <= Chunk.seaLevel + 1 {
                             blocks[Chunk.index(x, y, z)] = .sand
                         } else if height >= Chunk.snowLevel {
                             blocks[Chunk.index(x, y, z)] = .snow
                         } else {
-                            blocks[Chunk.index(x, y, z)] = .grass
+                            switch b {
+                            case .desert: blocks[Chunk.index(x, y, z)] = .sand
+                            case .mountains: blocks[Chunk.index(x, y, z)] = (height > Chunk.snowLevel - 6 ? .snow : .stone)
+                            case .plains, .forest, .hills:
+                                blocks[Chunk.index(x, y, z)] = .grass
+                            }
                         }
                     } else if y > height - 4 {
-                        blocks[Chunk.index(x, y, z)] = (height >= Chunk.snowLevel - 2) ? .stone : .dirt
+                        // Subsurface
+                        switch b {
+                        case .desert: blocks[Chunk.index(x, y, z)] = .sand
+                        case .mountains: blocks[Chunk.index(x, y, z)] = .stone
+                        default: blocks[Chunk.index(x, y, z)] = .dirt
+                        }
                     } else {
                         blocks[Chunk.index(x, y, z)] = .stone
                     }
@@ -79,16 +95,23 @@ final class Chunk {
             }
         }
 
-        // 2) Trees: random placement on grass tops
+        // Trees in forest biome (and sometimes plains)
         for x in 2..<(Chunk.sizeX - 2) {
             for z in 2..<(Chunk.sizeZ - 2) {
                 let h = heights[x][z]
                 if h <= Chunk.seaLevel + 1 || h >= Chunk.snowLevel - 2 { continue }
                 if blocks[Chunk.index(x, h, z)] != .grass { continue }
 
-                // Hash to decide if a tree spawns here
-                let hash = treeHash(baseX + x, baseZ + z, seed: seed)
-                if hash > 0.93 && h + 6 < Chunk.sizeY {
+                let density: Float
+                switch biomes[x][z] {
+                case .forest:    density = 0.85
+                case .plains:    density = 0.965
+                case .hills:     density = 0.93
+                case .mountains: density = 0.99
+                case .desert:    density = 1.1   // never
+                }
+                let r = treeHash(baseX + x, baseZ + z, seed: seed)
+                if r > density && h + 7 < Chunk.sizeY {
                     placeTree(x: x, y: h + 1, z: z)
                 }
             }
@@ -97,18 +120,72 @@ final class Chunk {
         meshDirty = true
     }
 
+    private enum Biome {
+        case plains, forest, hills, mountains, desert
+    }
+
+    /// Combined height + biome derivation.
+    private func heightAndBiomeAt(_ x: Float, _ z: Float, seed: UInt32) -> (Float, Biome) {
+        // Continent / large-scale relief
+        let relief = Noise.value2D(x * 0.005, z * 0.005, seed: seed)        // -1..1
+        // Mountain mask
+        let mountainNoise = Noise.value2D(x * 0.012, z * 0.012, seed: seed &+ 7)
+        // Mid-frequency hills
+        let hills = Noise.value2D(x * 0.04, z * 0.04, seed: seed &+ 1)
+        // Detail
+        let detail = Noise.value2D(x * 0.12, z * 0.12, seed: seed &+ 2) * 0.4
+
+        // Temperature/humidity for biomes
+        let temp = Noise.value2D(x * 0.0035, z * 0.0035, seed: seed &+ 17)   // -1..1
+        let humid = Noise.value2D(x * 0.004, z * 0.004, seed: seed &+ 31)
+
+        // Determine biome
+        let biome: Biome
+        if mountainNoise > 0.45 {
+            biome = .mountains
+        } else if temp > 0.45 && humid < 0 {
+            biome = .desert
+        } else if humid > 0.2 {
+            biome = .forest
+        } else if hills > 0.3 {
+            biome = .hills
+        } else {
+            biome = .plains
+        }
+
+        // Build height value depending on biome
+        var h: Float
+        switch biome {
+        case .mountains:
+            // Sharp mountains using ridged noise
+            let ridged = 1 - abs(relief)
+            h = 36 + ridged * 50 + hills * 14 + detail * 5
+        case .hills:
+            h = 30 + relief * 8 + hills * 14 + detail * 3
+        case .forest:
+            h = 30 + relief * 6 + hills * 8 + detail * 2
+        case .plains:
+            h = 28 + relief * 4 + hills * 4 + detail
+        case .desert:
+            h = 30 + relief * 4 + hills * 6 + detail
+        }
+        return (h, biome)
+    }
+
     private func placeTree(x: Int, y: Int, z: Int) {
-        // 4-block trunk
-        for dy in 0..<4 {
+        let trunkH = Int.random(in: 4...6)
+        for dy in 0..<trunkH {
             blocks[Chunk.index(x, y + dy, z)] = .wood
         }
-        // 3x3x2 leaf canopy
+        // Spherical canopy
+        let topY = y + trunkH
         for dx in -2...2 {
             for dz in -2...2 {
-                for dy in 3...5 {
-                    let dist = abs(dx) + abs(dz) + (dy - 4) * 2
+                for dy in -1...2 {
+                    let dist = abs(dx) + abs(dz) + abs(dy)
                     if dist > 4 { continue }
-                    let nx = x + dx, ny = y + dy, nz = z + dz
+                    if dx == 0 && dz == 0 && dy < 0 { continue } // don't replace trunk
+                    let nx = x + dx, ny = topY + dy, nz = z + dz
                     if nx < 0 || nx >= Chunk.sizeX { continue }
                     if nz < 0 || nz >= Chunk.sizeZ { continue }
                     if ny < 0 || ny >= Chunk.sizeY { continue }
@@ -117,10 +194,6 @@ final class Chunk {
                     }
                 }
             }
-        }
-        // Top leaf
-        if y + 6 < Chunk.sizeY {
-            blocks[Chunk.index(x, y + 5, z)] = .leaves
         }
     }
 
@@ -132,15 +205,7 @@ final class Chunk {
         return Float(h & 0xFFFFFF) / Float(0xFFFFFF)
     }
 
-    private func heightAt(_ x: Float, _ z: Float, seed: UInt32) -> Float {
-        let n1 = Noise.value2D(x * 0.015, z * 0.015, seed: seed)
-        let n2 = Noise.value2D(x * 0.04,  z * 0.04,  seed: seed &+ 1) * 0.5
-        let n3 = Noise.value2D(x * 0.10,  z * 0.10,  seed: seed &+ 2) * 0.25
-        let combined: Float = (n1 + n2 + n3) / 1.75
-        // ridged-ish to make hills more distinct
-        let amplified: Float = combined * combined * (combined > 0 ? 1.0 : -1.0)
-        return 26.0 + amplified * 28.0
-    }
+    // MARK: - Mesh
 
     func buildMesh(world: World) {
         var verts: [Vertex] = []
@@ -159,7 +224,6 @@ final class Chunk {
                     let wy = Float(y)
                     let wz = baseZ + Float(z)
 
-                    // For water, only emit the top face (and only if no water above)
                     if b == .water {
                         let above = world.blockAt(coord.x * Chunk.sizeX + x, y + 1, coord.y * Chunk.sizeZ + z)
                         if above == .air {

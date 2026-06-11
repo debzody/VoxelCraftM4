@@ -35,6 +35,7 @@ extension GameView: MTKViewDelegate {
         }
 
         updatePlayer(dt: dt)
+        streamChunksIfNeeded()
         updateCows(dt: dt)
         updateSelection()
         rebuildHUD()

@@ -42,6 +42,9 @@ extension GameView {
         if player.isDead { return }
         if let hit = Raycast.cast(origin: player.eyePos, direction: player.forward,
                                   maxDistance: 6, world: world) {
+            // Mine: collect the block (unless it's air/water)
+            let mined = hit.block
+            inventory.add(mined)
             setBlock(at: (hit.blockX, hit.blockY, hit.blockZ), to: .air)
         }
     }
@@ -49,6 +52,10 @@ extension GameView {
     override func rightMouseDown(with event: NSEvent) {
         if !mouseCaptured { captureMouse(); return }
         if player.isDead { return }
+        // Need at least one of the selected block in inventory
+        let placeType = hotbar[hotbarIndex]
+        if inventory.count(of: placeType) <= 0 { return }
+
         guard let hit = Raycast.cast(origin: player.eyePos, direction: player.forward,
                                      maxDistance: 6, world: world) else { return }
         let nx = hit.blockX + hit.normal.x
@@ -64,7 +71,8 @@ extension GameView {
             pmin.y < bmax.y && pmax.y > bmin.y &&
             pmin.z < bmax.z && pmax.z > bmin.z
         if !overlap {
-            setBlock(at: (nx, ny, nz), to: hotbar[hotbarIndex])
+            inventory.remove(placeType)
+            setBlock(at: (nx, ny, nz), to: placeType)
         }
     }
 

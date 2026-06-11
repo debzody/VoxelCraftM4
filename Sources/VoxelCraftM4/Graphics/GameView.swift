@@ -20,8 +20,12 @@ final class GameView: MTKView {
     var hudVertexCount: Int = 0
 
     let player = Player()
+    let inventory = Inventory()
     let hotbar: [BlockType] = [.grass, .dirt, .stone, .sand, .wood, .leaves, .snow]
     var hotbarIndex: Int = 0
+
+    /// Throttle chunk streaming so we don't do it every frame
+    var lastStreamChunk: SIMD2<Int> = SIMD2<Int>(Int.max, Int.max)
 
     var keysDown = Set<UInt16>()
     var mouseCaptured: Bool = false
@@ -85,12 +89,40 @@ final class GameView: MTKView {
     }
 
     private func loadWorld() {
-        print("Generating world...")
+        print("Generating initial world...")
         let t0 = CACurrentMediaTime()
-        world.generate()
-        print(String(format: "World generated in %.2fs", CACurrentMediaTime() - t0))
+        world.generateInitial()
+        print(String(format: "Initial world ready in %.2fs (%d chunks)",
+                     CACurrentMediaTime() - t0, world.chunks.count))
         rebuildChunkBuffers()
         spawnPlayerOnTerrain()
+        lastStreamChunk = World.chunkOf(worldPos: player.position)
+    }
+
+    /// Called every frame from updatePlayer (via Draw). Streams chunks
+    /// based on player position so the world appears infinite.
+    func streamChunksIfNeeded() {
+        let now = World.chunkOf(worldPos: player.position)
+        if now == lastStreamChunk { return }
+        lastStreamChunk = now
+
+        let (added, removed) = world.streamChunks(around: now)
+
+        // Build meshes for new chunks
+        for c in added {
+            rebuildOneChunk(c)
+        }
+        // Rebuild edge chunks of removed (so faces along the boundary refresh)
+        for c in removed {
+            chunkBuffers.removeValue(forKey: c)
+        }
+        // After topology changed, rebuild any boundary chunks
+        for c in added {
+            rebuildOneChunk(SIMD2<Int>(c.x - 1, c.y))
+            rebuildOneChunk(SIMD2<Int>(c.x + 1, c.y))
+            rebuildOneChunk(SIMD2<Int>(c.x, c.y - 1))
+            rebuildOneChunk(SIMD2<Int>(c.x, c.y + 1))
+        }
     }
 
     private func spawnPlayerOnTerrain() {
