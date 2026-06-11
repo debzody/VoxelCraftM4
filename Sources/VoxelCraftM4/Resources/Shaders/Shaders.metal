@@ -38,35 +38,55 @@ fragment float4 fs_main(VertexOut in [[stage_in]],
                         constant Uniforms &u [[buffer(1)]]) {
     float3 N = normalize(in.normal);
     float3 L = normalize(-u.lightDir);
-
-    // Sun direct light
     float NdotL = max(dot(N, L), 0.0);
     float3 sunColor = float3(1.0, 0.96, 0.86) * 1.4;
     float3 direct = in.color * NdotL * sunColor;
-
-    // Hemispherical sky/ground ambient (much stronger)
     float hemi = 0.5 + 0.5 * N.y;
     float3 skyTint    = float3(0.55, 0.78, 1.0);
     float3 groundTint = float3(0.30, 0.25, 0.20);
     float3 ambient    = mix(groundTint, skyTint, hemi) * in.color * 0.85;
-
-    // Cheap face-direction tint to make cubes pop a bit
     float3 axisTint = float3(1.0);
-    if (abs(N.x) > 0.5) axisTint = float3(0.85);   // sides slightly darker
-    else if (N.y >  0.5) axisTint = float3(1.10);  // tops bright
-    else if (N.y < -0.5) axisTint = float3(0.65);  // bottoms dark
-
+    if (abs(N.x) > 0.5) axisTint = float3(0.85);
+    else if (N.y >  0.5) axisTint = float3(1.10);
+    else if (N.y < -0.5) axisTint = float3(0.65);
     float3 color = (direct + ambient) * axisTint;
 
-    // Distance fog (sky-blue)
     float dist = distance(in.worldPos, u.cameraPos);
-    float fog = exp(-0.0035 * dist);
-    fog = clamp(fog, 0.0, 1.0);
+    float fog = clamp(exp(-0.0035 * dist), 0.0, 1.0);
     float3 fogColor = float3(0.62, 0.80, 0.98);
     color = mix(fogColor, color, fog);
 
-    // ACES-ish tonemap + gamma is implicit via sRGB target
     color = (color * (2.51 * color + 0.03)) / (color * (2.43 * color + 0.59) + 0.14);
     color = clamp(color, 0.0, 1.0);
     return float4(color, 1.0);
+}
+
+// =============== 2D HUD ================
+struct HUDIn {
+    float2 position [[attribute(0)]];
+    float4 color    [[attribute(1)]];
+};
+
+struct HUDOut {
+    float4 position [[position]];
+    float4 color;
+};
+
+// Use raw vertex_id loading (no [[stage_in]]) — simpler and avoids descriptor mismatch.
+struct HUDVertex {
+    float2 position;
+    float4 color;
+};
+
+vertex HUDOut vs_hud(uint vid [[vertex_id]],
+                     constant HUDVertex *verts [[buffer(0)]]) {
+    HUDVertex v = verts[vid];
+    HUDOut o;
+    o.position = float4(v.position, 0.0, 1.0);
+    o.color = v.color;
+    return o;
+}
+
+fragment float4 fs_hud(HUDOut in [[stage_in]]) {
+    return in.color;
 }
