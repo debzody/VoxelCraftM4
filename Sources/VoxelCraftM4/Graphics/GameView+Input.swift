@@ -46,6 +46,9 @@ extension GameView {
             let mined = hit.block
             inventory.add(mined)
             setBlock(at: (hit.blockX, hit.blockY, hit.blockZ), to: .air)
+            if let done = quests.onMined(mined) {
+                showToast("✅ \(done.title) — +50")
+            }
         }
     }
 
@@ -73,7 +76,16 @@ extension GameView {
         if !overlap {
             inventory.remove(placeType)
             setBlock(at: (nx, ny, nz), to: placeType)
+            if let done = quests.onPlaced(placeType) {
+                showToast("✅ \(done.title) — +75")
+            }
         }
+    }
+
+    /// Show a toast message at the top of the screen for ~3.5 seconds.
+    func showToast(_ msg: String) {
+        toastMessage = msg
+        toastTimer = 3.5
     }
 
     override func mouseMoved(with event: NSEvent)        { handleMouseDelta(Float(event.deltaX), Float(event.deltaY)) }
@@ -150,6 +162,23 @@ extension GameView {
         let sprinting = keysDown.contains(56)          // Left Shift
 
         player.physicsStep(dt: dt, wishDir: wish, jump: jump, sprinting: sprinting, world: world)
+
+        // ----- Quest progress: distance + height -----
+        let nowXZ = SIMD2<Float>(player.position.x, player.position.z)
+        if lastTrackedXZ == .zero { lastTrackedXZ = nowXZ }
+        let moved = simd_distance(nowXZ, lastTrackedXZ)
+        if moved >= 1.0 {                  // accumulate per integer block walked
+            if let done = quests.onMoved(distance: moved) {
+                showToast("✅ \(done.title) — +60")
+            }
+            lastTrackedXZ = nowXZ
+        }
+        if let done = quests.onHeight(player.position.y) {
+            showToast("✅ \(done.title) — +80")
+        }
+
+        // Toast timer
+        if toastTimer > 0 { toastTimer -= dt; if toastTimer <= 0 { toastMessage = "" } }
 
         // Auto-respawn if dead for >2s
         if player.isDead && player.deathTimer > 3.0 {

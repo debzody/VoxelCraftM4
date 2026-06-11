@@ -26,10 +26,18 @@ extension GameView: MTKViewDelegate {
             let stateStr = player.isDead ? "💀 DEAD (R/auto-respawn)"
                           : player.flying ? "✈ FLY"
                           : (player.onGround ? "🚶 GROUND" : "🪂 AIR")
+            // Find next active (uncompleted) quest to display
+            let active = quests.quests.first(where: { !$0.completed })
+            let questStr: String
+            if let q = active {
+                questStr = "🎯 \(q.title) [\(q.progress)/\(q.target)]"
+            } else {
+                questStr = "🏆 ALL QUESTS DONE!"
+            }
             window?.title = String(format:
-                "VoxelCraft M4 — %.0f FPS — HP %d/%d — %@ — view: %@ — block: %@",
-                fps, player.health, player.maxHealth,
-                stateStr, modeStr, "\(hotbar[hotbarIndex])")
+                "VoxelCraft — %.0f FPS — HP %d/%d — Score %d — %@ — view:%@ — block:%@ — %@",
+                fps, player.health, player.maxHealth, quests.totalScore,
+                stateStr, modeStr, "\(hotbar[hotbarIndex])", questStr)
             fpsAccumTime = 0
             frameCount = 0
         }

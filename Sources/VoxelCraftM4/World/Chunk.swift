@@ -232,23 +232,31 @@ final class Chunk {
                         continue
                     }
 
+                    let wlx = coord.x * Chunk.sizeX + x
+                    let wlz = coord.y * Chunk.sizeZ + z
                     if !neighborOpaque(x + 1, y, z, world: world) {
-                        addFace(&verts, x: wx, y: wy, z: wz, face: 0, color: b.color(face: 0))
+                        addFaceAO(&verts, wx: wx, wy: wy, wz: wz, face: 0, color: b.color(face: 0),
+                                  bx: wlx, by: y, bz: wlz, world: world)
                     }
                     if !neighborOpaque(x - 1, y, z, world: world) {
-                        addFace(&verts, x: wx, y: wy, z: wz, face: 1, color: b.color(face: 1))
+                        addFaceAO(&verts, wx: wx, wy: wy, wz: wz, face: 1, color: b.color(face: 1),
+                                  bx: wlx, by: y, bz: wlz, world: world)
                     }
                     if !neighborOpaque(x, y + 1, z, world: world) {
-                        addFace(&verts, x: wx, y: wy, z: wz, face: 2, color: b.color(face: 2))
+                        addFaceAO(&verts, wx: wx, wy: wy, wz: wz, face: 2, color: b.color(face: 2),
+                                  bx: wlx, by: y, bz: wlz, world: world)
                     }
                     if y > 0 && !neighborOpaque(x, y - 1, z, world: world) {
-                        addFace(&verts, x: wx, y: wy, z: wz, face: 3, color: b.color(face: 3))
+                        addFaceAO(&verts, wx: wx, wy: wy, wz: wz, face: 3, color: b.color(face: 3),
+                                  bx: wlx, by: y, bz: wlz, world: world)
                     }
                     if !neighborOpaque(x, y, z + 1, world: world) {
-                        addFace(&verts, x: wx, y: wy, z: wz, face: 4, color: b.color(face: 4))
+                        addFaceAO(&verts, wx: wx, wy: wy, wz: wz, face: 4, color: b.color(face: 4),
+                                  bx: wlx, by: y, bz: wlz, world: world)
                     }
                     if !neighborOpaque(x, y, z - 1, world: world) {
-                        addFace(&verts, x: wx, y: wy, z: wz, face: 5, color: b.color(face: 5))
+                        addFaceAO(&verts, wx: wx, wy: wy, wz: wz, face: 5, color: b.color(face: 5),
+                                  bx: wlx, by: y, bz: wlz, world: world)
                     }
                 }
             }
@@ -295,5 +303,160 @@ final class Chunk {
         verts.append(Vertex(position: a, normal: n, color: color))
         verts.append(Vertex(position: c, normal: n, color: color))
         verts.append(Vertex(position: d, normal: n, color: color))
+    }
+}
+
+// MARK: - Ambient Occlusion mesh helpers
+
+extension Chunk {
+    /// Per-vertex AO: 0=no occlusion (full bright), 3=fully occluded (dark)
+    /// Uses Minecraft-style 3-neighbor sample (side1, side2, corner).
+    @inline(__always)
+    static func aoFactor(side1: Bool, side2: Bool, corner: Bool) -> Int {
+        if side1 && side2 { return 3 }   // both side neighbors solid → full dark
+        return (side1 ? 1 : 0) + (side2 ? 1 : 0) + (corner ? 1 : 0)
+    }
+
+    @inline(__always)
+    static func aoBrightness(_ ao: Int) -> Float {
+        // 0..3 → brightness multiplier (1.0..0.55)
+        switch ao {
+        case 0: return 1.00
+        case 1: return 0.85
+        case 2: return 0.70
+        default: return 0.55
+        }
+    }
+
+    /// Build a face with per-vertex AO, then emit 6 triangle vertices using flipped diagonal
+    /// when needed to avoid the AO "anisotropy" artifact.
+    func addFaceAO(_ verts: inout [Vertex],
+                   wx: Float, wy: Float, wz: Float, face: Int, color: Float3,
+                   bx: Int, by: Int, bz: Int, world: World) {
+        // Local helper to read solid neighbours in world coords
+        @inline(__always) func s(_ x: Int, _ y: Int, _ z: Int) -> Bool { world.isOpaque(x, y, z) }
+
+        // 4 corners of this face — each gets its own AO and position
+        // Vertex order matches addFace's switch case
+        var v: [(p: Float3, ao: Int)] = []
+
+        switch face {
+        case 0: // +X (east)
+            // corners on the +X face plane (x = bx+1), going (y, z) from low/low to high/low → ...
+            let corners: [(SIMD3<Int>, Float3)] = [
+                (SIMD3<Int>(0, -1, -1), Float3(wx + 1, wy,     wz)),       // p100
+                (SIMD3<Int>(0, -1,  1), Float3(wx + 1, wy,     wz + 1)),   // p101
+                (SIMD3<Int>(0,  1,  1), Float3(wx + 1, wy + 1, wz + 1)),   // p111
+                (SIMD3<Int>(0,  1, -1), Float3(wx + 1, wy + 1, wz))        // p110
+            ]
+            for c in corners {
+                let side1 = s(bx + 1, by + c.0.y, bz)
+                let side2 = s(bx + 1, by, bz + c.0.z)
+                let corner = s(bx + 1, by + c.0.y, bz + c.0.z)
+                let ao = Self.aoFactor(side1: side1, side2: side2, corner: corner)
+                v.append((c.1, ao))
+            }
+            emitFace(&verts, v: v, normal: Float3(1, 0, 0), color: color)
+        case 1: // -X (west)
+            let corners: [(SIMD3<Int>, Float3)] = [
+                (SIMD3<Int>(0, -1,  1), Float3(wx, wy,     wz + 1)),       // p001
+                (SIMD3<Int>(0, -1, -1), Float3(wx, wy,     wz)),           // p000
+                (SIMD3<Int>(0,  1, -1), Float3(wx, wy + 1, wz)),           // p010
+                (SIMD3<Int>(0,  1,  1), Float3(wx, wy + 1, wz + 1))        // p011
+            ]
+            for c in corners {
+                let side1 = s(bx - 1, by + c.0.y, bz)
+                let side2 = s(bx - 1, by, bz + c.0.z)
+                let corner = s(bx - 1, by + c.0.y, bz + c.0.z)
+                let ao = Self.aoFactor(side1: side1, side2: side2, corner: corner)
+                v.append((c.1, ao))
+            }
+            emitFace(&verts, v: v, normal: Float3(-1, 0, 0), color: color)
+        case 2: // +Y (top)
+            let corners: [(SIMD3<Int>, Float3)] = [
+                (SIMD3<Int>(-1, 0, -1), Float3(wx,     wy + 1, wz)),       // p010
+                (SIMD3<Int>( 1, 0, -1), Float3(wx + 1, wy + 1, wz)),       // p110
+                (SIMD3<Int>( 1, 0,  1), Float3(wx + 1, wy + 1, wz + 1)),   // p111
+                (SIMD3<Int>(-1, 0,  1), Float3(wx,     wy + 1, wz + 1))    // p011
+            ]
+            for c in corners {
+                let side1 = s(bx + c.0.x, by + 1, bz)
+                let side2 = s(bx, by + 1, bz + c.0.z)
+                let corner = s(bx + c.0.x, by + 1, bz + c.0.z)
+                let ao = Self.aoFactor(side1: side1, side2: side2, corner: corner)
+                v.append((c.1, ao))
+            }
+            emitFace(&verts, v: v, normal: Float3(0, 1, 0), color: color)
+        case 3: // -Y (bottom) — usually less visible, just give flat AO
+            let corners: [Float3] = [
+                Float3(wx,     wy, wz),     Float3(wx,     wy, wz + 1),
+                Float3(wx + 1, wy, wz + 1), Float3(wx + 1, wy, wz)
+            ]
+            for c in corners { v.append((c, 1)) }
+            emitFace(&verts, v: v, normal: Float3(0, -1, 0), color: color)
+        case 4: // +Z (south)
+            let corners: [(SIMD3<Int>, Float3)] = [
+                (SIMD3<Int>( 1, -1, 0), Float3(wx + 1, wy,     wz + 1)),   // p101
+                (SIMD3<Int>(-1, -1, 0), Float3(wx,     wy,     wz + 1)),   // p001
+                (SIMD3<Int>(-1,  1, 0), Float3(wx,     wy + 1, wz + 1)),   // p011
+                (SIMD3<Int>( 1,  1, 0), Float3(wx + 1, wy + 1, wz + 1))    // p111
+            ]
+            for c in corners {
+                let side1 = s(bx + c.0.x, by, bz + 1)
+                let side2 = s(bx, by + c.0.y, bz + 1)
+                let corner = s(bx + c.0.x, by + c.0.y, bz + 1)
+                let ao = Self.aoFactor(side1: side1, side2: side2, corner: corner)
+                v.append((c.1, ao))
+            }
+            emitFace(&verts, v: v, normal: Float3(0, 0, 1), color: color)
+        case 5: // -Z (north)
+            let corners: [(SIMD3<Int>, Float3)] = [
+                (SIMD3<Int>(-1, -1, 0), Float3(wx,     wy,     wz)),       // p000
+                (SIMD3<Int>( 1, -1, 0), Float3(wx + 1, wy,     wz)),       // p100
+                (SIMD3<Int>( 1,  1, 0), Float3(wx + 1, wy + 1, wz)),       // p110
+                (SIMD3<Int>(-1,  1, 0), Float3(wx,     wy + 1, wz))        // p010
+            ]
+            for c in corners {
+                let side1 = s(bx + c.0.x, by, bz - 1)
+                let side2 = s(bx, by + c.0.y, bz - 1)
+                let corner = s(bx + c.0.x, by + c.0.y, bz - 1)
+                let ao = Self.aoFactor(side1: side1, side2: side2, corner: corner)
+                v.append((c.1, ao))
+            }
+            emitFace(&verts, v: v, normal: Float3(0, 0, -1), color: color)
+        default: break
+        }
+    }
+
+    /// Emit 4-vertex face as 2 triangles, picking the diagonal that minimises AO interpolation artifact.
+    private func emitFace(_ verts: inout [Vertex],
+                          v: [(p: Float3, ao: Int)],
+                          normal: Float3, color: Float3) {
+        let v0 = v[0], v1 = v[1], v2 = v[2], v3 = v[3]
+        let c0 = color * Self.aoBrightness(v0.ao)
+        let c1 = color * Self.aoBrightness(v1.ao)
+        let c2 = color * Self.aoBrightness(v2.ao)
+        let c3 = color * Self.aoBrightness(v3.ao)
+
+        // If diagonal v0-v2 has higher AO contrast, flip to v1-v3
+        let flip = (v0.ao + v2.ao) > (v1.ao + v3.ao)
+
+        if flip {
+            // 0,1,3 + 1,2,3
+            verts.append(Vertex(position: v0.p, normal: normal, color: c0))
+            verts.append(Vertex(position: v1.p, normal: normal, color: c1))
+            verts.append(Vertex(position: v3.p, normal: normal, color: c3))
+            verts.append(Vertex(position: v1.p, normal: normal, color: c1))
+            verts.append(Vertex(position: v2.p, normal: normal, color: c2))
+            verts.append(Vertex(position: v3.p, normal: normal, color: c3))
+        } else {
+            // 0,1,2 + 0,2,3
+            verts.append(Vertex(position: v0.p, normal: normal, color: c0))
+            verts.append(Vertex(position: v1.p, normal: normal, color: c1))
+            verts.append(Vertex(position: v2.p, normal: normal, color: c2))
+            verts.append(Vertex(position: v0.p, normal: normal, color: c0))
+            verts.append(Vertex(position: v2.p, normal: normal, color: c2))
+            verts.append(Vertex(position: v3.p, normal: normal, color: c3))
+        }
     }
 }

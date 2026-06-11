@@ -146,6 +146,9 @@ extension GameView {
             }
         }
 
+        // Quest panel + toast
+        appendQuestUI(&v)
+
         hudVertexCount = v.count
         let length = v.count * MemoryLayout<HUDVertex>.stride
         hudBuffer = device.makeBuffer(bytes: v, length: length, options: .storageModeShared)
@@ -200,6 +203,138 @@ extension GameView {
                       color: SIMD4<Float>(0, 0, 0, color.w * 0.7))
             drawDigit(&v, digit: d, x: x, y: y, pixel: pixel, color: color)
             x -= gap
+        }
+    }
+}
+// MARK: - Quest panel & toast (overlay) — call from rebuildHUD by extending it
+
+extension GameView {
+
+    /// Append quest UI to the existing HUD vertex buffer.
+    /// Called automatically inside rebuildHUD via this swizzle pattern.
+    func appendQuestUI(_ v: inout [HUDVertex]) {
+        // ===== Quest panel (top-right) =====
+        let panelW: Float = 0.42
+        let lineH: Float  = 0.045
+        let activeQuests = quests.quests.prefix(6)
+        let panelH = Float(activeQuests.count) * lineH + 0.06
+        let px: Float = 1.0 - panelW - 0.02
+        let py: Float = 1.0 - 0.04           // top y of panel
+
+        appendHUDQuad(&v, x0: px, y0: py - panelH, x1: px + panelW, y1: py,
+                      color: SIMD4<Float>(0, 0, 0, 0.55))
+        // Title bar
+        appendHUDQuad(&v, x0: px, y0: py - 0.04, x1: px + panelW, y1: py,
+                      color: SIMD4<Float>(0.15, 0.30, 0.50, 0.90))
+
+        // Score (top-right of title bar)
+        drawHUDNumber(&v, value: quests.totalScore,
+                      xRight: px + panelW - 0.01, y: py - 0.035, pixel: 0.0040,
+                      color: SIMD4<Float>(1, 0.85, 0.25, 1))
+
+        // Quest rows
+        for (i, q) in activeQuests.enumerated() {
+            let rowY = py - 0.04 - Float(i + 1) * lineH + lineH * 0.5
+            // Status dot (filled if completed)
+            let dotColor: SIMD4<Float> = q.completed ?
+                SIMD4<Float>(0.25, 0.95, 0.30, 1) :
+                SIMD4<Float>(0.6, 0.6, 0.6, 0.7)
+            appendHUDQuad(&v, x0: px + 0.012, y0: rowY - 0.012,
+                              x1: px + 0.028, y1: rowY + 0.012,
+                              color: dotColor)
+            // Progress bar
+            let pbX = px + 0.038, pbW = panelW - 0.10, pbY = rowY - 0.014, pbH: Float = 0.026
+            appendHUDQuad(&v, x0: pbX, y0: pbY, x1: pbX + pbW, y1: pbY + pbH,
+                          color: SIMD4<Float>(0.10, 0.10, 0.15, 0.85))
+            let frac = Float(q.progress) / Float(q.target)
+            let barColor: SIMD4<Float> = q.completed
+                ? SIMD4<Float>(0.20, 0.85, 0.30, 0.95)
+                : SIMD4<Float>(0.30, 0.65, 0.95, 0.92)
+            if frac > 0 {
+                appendHUDQuad(&v, x0: pbX, y0: pbY,
+                              x1: pbX + pbW * min(1, frac), y1: pbY + pbH,
+                              color: barColor)
+            }
+            // Progress numbers (right side: progress/target)
+            drawHUDNumber(&v, value: q.progress, xRight: pbX + pbW - 0.018, y: pbY + 0.005,
+                          pixel: 0.0028, color: SIMD4<Float>(1,1,1,1))
+            drawHUDNumber(&v, value: q.target, xRight: px + panelW - 0.012, y: pbY + 0.005,
+                          pixel: 0.0028, color: SIMD4<Float>(0.85, 0.85, 0.95, 0.9))
+            // small "/" between
+            appendHUDQuad(&v, x0: pbX + pbW - 0.011, y0: pbY + 0.007,
+                          x1: pbX + pbW - 0.008, y1: pbY + 0.020,
+                          color: SIMD4<Float>(0.85, 0.85, 0.95, 0.9))
+        }
+
+        // ===== Toast (top-center) =====
+        if toastTimer > 0 && !toastMessage.isEmpty {
+            let alpha = min(1.0, toastTimer / 0.5)  // fade out last 0.5s
+            let tH: Float = 0.07, tW: Float = 0.7
+            let tX = -tW * 0.5, tY: Float = 0.85
+            appendHUDQuad(&v, x0: tX, y0: tY, x1: tX + tW, y1: tY + tH,
+                          color: SIMD4<Float>(0.10, 0.45, 0.20, 0.85 * alpha))
+            // We don't have proper text rendering for messages; draw a green pulse bar.
+            appendHUDQuad(&v, x0: tX + 0.01, y0: tY + 0.005,
+                          x1: tX + tW - 0.01, y1: tY + 0.012,
+                          color: SIMD4<Float>(0.95, 1.0, 0.5, 0.95 * alpha))
+        }
+    }
+
+    /// Helper bridge — calls into the private `appendQuad` style so we don't duplicate code.
+    fileprivate func appendHUDQuad(_ v: inout [HUDVertex],
+                                   x0: Float, y0: Float, x1: Float, y1: Float,
+                                   color: SIMD4<Float>) {
+        let a = HUDVertex(position: SIMD2<Float>(x0, y0), color: color)
+        let b = HUDVertex(position: SIMD2<Float>(x1, y0), color: color)
+        let c = HUDVertex(position: SIMD2<Float>(x1, y1), color: color)
+        let d = HUDVertex(position: SIMD2<Float>(x0, y1), color: color)
+        v.append(a); v.append(b); v.append(c)
+        v.append(a); v.append(c); v.append(d)
+    }
+
+    /// Right-aligned number for HUD overlays.
+    fileprivate func drawHUDNumber(_ v: inout [HUDVertex], value: Int, xRight: Float, y: Float,
+                                   pixel: Float, color: SIMD4<Float>) {
+        var n = max(0, value)
+        var digits: [Int] = []
+        if n == 0 { digits = [0] }
+        else { while n > 0 { digits.append(n % 10); n /= 10 } }
+        let digitW = pixel * 3
+        let gap = pixel
+        var x = xRight
+        for d in digits {
+            x -= digitW
+            drawHUDDigit(&v, digit: d, x: x, y: y, pixel: pixel, color: color)
+            x -= gap
+        }
+    }
+
+    fileprivate func drawHUDDigit(_ v: inout [HUDVertex], digit: Int, x: Float, y: Float,
+                                  pixel: Float, color: SIMD4<Float>) {
+        guard digit >= 0 && digit <= 9 else { return }
+        // Reuse our private digitGlyphs through a quick local copy
+        let glyphs: [[UInt8]] = [
+            [0b111, 0b101, 0b101, 0b101, 0b111],
+            [0b010, 0b110, 0b010, 0b010, 0b111],
+            [0b111, 0b001, 0b111, 0b100, 0b111],
+            [0b111, 0b001, 0b111, 0b001, 0b111],
+            [0b101, 0b101, 0b111, 0b001, 0b001],
+            [0b111, 0b100, 0b111, 0b001, 0b111],
+            [0b111, 0b100, 0b111, 0b101, 0b111],
+            [0b111, 0b001, 0b001, 0b010, 0b010],
+            [0b111, 0b101, 0b111, 0b101, 0b111],
+            [0b111, 0b101, 0b111, 0b001, 0b111],
+        ]
+        let glyph = glyphs[digit]
+        for row in 0..<5 {
+            let bits = glyph[row]
+            for col in 0..<3 {
+                if (bits & UInt8(1 << (2 - col))) != 0 {
+                    let px = x + Float(col) * pixel
+                    let py = y - Float(row) * pixel
+                    appendHUDQuad(&v, x0: px, y0: py, x1: px + pixel, y1: py + pixel, color: color)
+                }
+            }
         }
     }
 }

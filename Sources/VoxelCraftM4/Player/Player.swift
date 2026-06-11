@@ -31,9 +31,9 @@ final class Player {
     var isDead: Bool { health <= 0 }
     var deathTimer: Float = 0    // when dead, count up to respawn
 
-    // Camera
-    var cameraMode: CameraMode = .first
-    var cameraDistance: Float = 4.0  // for third-person
+    // Camera (default to third-person back so the player sees themselves)
+    var cameraMode: CameraMode = .thirdBack
+    var cameraDistance: Float = 4.5  // for third-person
 
     var forward: Float3 {
         Float3(cos(pitch) * sin(yaw), sin(pitch), -cos(pitch) * cos(yaw))

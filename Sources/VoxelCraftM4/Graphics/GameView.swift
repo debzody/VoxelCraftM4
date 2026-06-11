@@ -21,8 +21,16 @@ final class GameView: MTKView {
 
     let player = Player()
     let inventory = Inventory()
+    let quests = QuestManager()
     let hotbar: [BlockType] = [.grass, .dirt, .stone, .sand, .wood, .leaves, .snow]
     var hotbarIndex: Int = 0
+
+    /// Toast: (message, remainingSeconds)
+    var toastMessage: String = ""
+    var toastTimer: Float = 0
+
+    /// Last frame's xz to compute movement distance for explore quests
+    var lastTrackedXZ: SIMD2<Float> = .zero
 
     /// Throttle chunk streaming so we don't do it every frame
     var lastStreamChunk: SIMD2<Int> = SIMD2<Int>(Int.max, Int.max)
