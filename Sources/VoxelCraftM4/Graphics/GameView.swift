@@ -234,7 +234,7 @@ extension GameView: MTKViewDelegate {
 
         enc.setRenderPipelineState(pipelineState)
         enc.setDepthStencilState(depthState)
-        enc.setCullMode(.back)
+        enc.setCullMode(.none)        // simpler — disables back-face culling so water etc. visible from both sides
         enc.setFrontFacing(.counterClockwise)
 
         enc.setVertexBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 1)

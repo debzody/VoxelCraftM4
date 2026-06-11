@@ -10,6 +10,7 @@ enum BlockType: UInt8 {
     case wood = 5
     case leaves = 6
     case water = 7
+    case snow = 8
 
     var isSolid: Bool { self != .air && self != .water }
     var isOpaque: Bool { self != .air && self != .water && self != .leaves }
@@ -19,15 +20,19 @@ enum BlockType: UInt8 {
         switch self {
         case .air:    return Float3(0, 0, 0)
         case .grass:
-            if face == 2 { return Float3(0.30, 0.75, 0.25) } // top - green
-            if face == 3 { return Float3(0.45, 0.30, 0.18) } // bottom - dirt
-            return Float3(0.40, 0.55, 0.22) // side - mixed
-        case .dirt:   return Float3(0.45, 0.30, 0.18)
-        case .stone:  return Float3(0.55, 0.55, 0.58)
-        case .sand:   return Float3(0.92, 0.86, 0.62)
-        case .wood:   return Float3(0.45, 0.30, 0.15)
-        case .leaves: return Float3(0.20, 0.55, 0.20)
-        case .water:  return Float3(0.15, 0.40, 0.85)
+            if face == 2 { return Float3(0.36, 0.82, 0.32) }   // top: vivid green
+            if face == 3 { return Float3(0.55, 0.38, 0.22) }   // bottom: dirt
+            // Side: dirt with green strip on top — emulate by mixing
+            return Float3(0.45, 0.62, 0.28)
+        case .dirt:   return Float3(0.55, 0.38, 0.22)
+        case .stone:  return Float3(0.62, 0.62, 0.66)
+        case .sand:   return Float3(0.96, 0.90, 0.66)
+        case .wood:
+            if face == 2 || face == 3 { return Float3(0.62, 0.45, 0.25) } // rings on top/bottom
+            return Float3(0.50, 0.34, 0.18)
+        case .leaves: return Float3(0.28, 0.62, 0.24)
+        case .water:  return Float3(0.18, 0.45, 0.85)
+        case .snow:   return Float3(0.96, 0.97, 1.00)
         }
     }
 }

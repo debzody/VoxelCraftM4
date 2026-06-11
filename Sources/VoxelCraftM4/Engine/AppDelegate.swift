@@ -27,7 +27,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         gameView.preferredFramesPerSecond = 120 // ProMotion on M4 Pro
         gameView.colorPixelFormat = .bgra8Unorm_srgb
         gameView.depthStencilPixelFormat = .depth32Float
-        gameView.clearColor = MTLClearColor(red: 0.45, green: 0.7, blue: 0.95, alpha: 1.0) // sky blue
+        gameView.clearColor = MTLClearColor(red: 0.62, green: 0.80, blue: 0.98, alpha: 1.0) // bright sky blue (matches fog)
         gameView.sampleCount = 1
 
         window.contentView = gameView

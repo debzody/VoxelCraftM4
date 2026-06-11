@@ -9,11 +9,13 @@ struct Vertex {
 
 final class Chunk {
     static let sizeX = 16
-    static let sizeY = 64
+    static let sizeY = 80
     static let sizeZ = 16
+    static let seaLevel = 22
+    static let snowLevel = 46
 
-    let coord: SIMD2<Int>     // chunk coords (x,z) in chunk space
-    var blocks: [BlockType]   // flat array sizeX*sizeY*sizeZ
+    let coord: SIMD2<Int>
+    var blocks: [BlockType]
     var meshDirty: Bool = true
     var mesh: [Vertex] = []
 
@@ -39,45 +41,110 @@ final class Chunk {
         meshDirty = true
     }
 
-    /// Generate terrain using basic value noise + heightmap.
     func generateTerrain(seed: UInt32) {
         let baseX = coord.x * Chunk.sizeX
         let baseZ = coord.y * Chunk.sizeZ
+
+        // 1) Heightmap + base layers
+        var heights = [[Int]](repeating: [Int](repeating: 0, count: Chunk.sizeZ), count: Chunk.sizeX)
         for x in 0..<Chunk.sizeX {
             for z in 0..<Chunk.sizeZ {
                 let wx = Float(baseX + x)
                 let wz = Float(baseZ + z)
                 let h = heightAt(wx, wz, seed: seed)
-                let height = max(1, min(Chunk.sizeY - 1, Int(h)))
+                let height = max(1, min(Chunk.sizeY - 2, Int(h)))
+                heights[x][z] = height
+
                 for y in 0..<Chunk.sizeY {
                     if y > height {
-                        blocks[Chunk.index(x, y, z)] = .air
+                        if y <= Chunk.seaLevel {
+                            blocks[Chunk.index(x, y, z)] = .water
+                        } else {
+                            blocks[Chunk.index(x, y, z)] = .air
+                        }
                     } else if y == height {
-                        blocks[Chunk.index(x, y, z)] = (height < 18) ? .sand : .grass
+                        if height <= Chunk.seaLevel + 1 {
+                            blocks[Chunk.index(x, y, z)] = .sand
+                        } else if height >= Chunk.snowLevel {
+                            blocks[Chunk.index(x, y, z)] = .snow
+                        } else {
+                            blocks[Chunk.index(x, y, z)] = .grass
+                        }
                     } else if y > height - 4 {
-                        blocks[Chunk.index(x, y, z)] = .dirt
+                        blocks[Chunk.index(x, y, z)] = (height >= Chunk.snowLevel - 2) ? .stone : .dirt
                     } else {
                         blocks[Chunk.index(x, y, z)] = .stone
                     }
                 }
             }
         }
+
+        // 2) Trees: random placement on grass tops
+        for x in 2..<(Chunk.sizeX - 2) {
+            for z in 2..<(Chunk.sizeZ - 2) {
+                let h = heights[x][z]
+                if h <= Chunk.seaLevel + 1 || h >= Chunk.snowLevel - 2 { continue }
+                if blocks[Chunk.index(x, h, z)] != .grass { continue }
+
+                // Hash to decide if a tree spawns here
+                let hash = treeHash(baseX + x, baseZ + z, seed: seed)
+                if hash > 0.93 && h + 6 < Chunk.sizeY {
+                    placeTree(x: x, y: h + 1, z: z)
+                }
+            }
+        }
+
         meshDirty = true
     }
 
-    private func heightAt(_ x: Float, _ z: Float, seed: UInt32) -> Float {
-        // Simple multi-octave value noise
-        let n1 = Noise.value2D(x * 0.02, z * 0.02, seed: seed)
-        let n2 = Noise.value2D(x * 0.05, z * 0.05, seed: seed &+ 1) * 0.5
-        let n3 = Noise.value2D(x * 0.10, z * 0.10, seed: seed &+ 2) * 0.25
-        let combined = (n1 + n2 + n3) / 1.75
-        return 24 + combined * 18
+    private func placeTree(x: Int, y: Int, z: Int) {
+        // 4-block trunk
+        for dy in 0..<4 {
+            blocks[Chunk.index(x, y + dy, z)] = .wood
+        }
+        // 3x3x2 leaf canopy
+        for dx in -2...2 {
+            for dz in -2...2 {
+                for dy in 3...5 {
+                    let dist = abs(dx) + abs(dz) + (dy - 4) * 2
+                    if dist > 4 { continue }
+                    let nx = x + dx, ny = y + dy, nz = z + dz
+                    if nx < 0 || nx >= Chunk.sizeX { continue }
+                    if nz < 0 || nz >= Chunk.sizeZ { continue }
+                    if ny < 0 || ny >= Chunk.sizeY { continue }
+                    if blocks[Chunk.index(nx, ny, nz)] == .air {
+                        blocks[Chunk.index(nx, ny, nz)] = .leaves
+                    }
+                }
+            }
+        }
+        // Top leaf
+        if y + 6 < Chunk.sizeY {
+            blocks[Chunk.index(x, y + 5, z)] = .leaves
+        }
     }
 
-    /// Build mesh by iterating each block & emitting visible faces (no greedy meshing yet).
+    private func treeHash(_ x: Int, _ z: Int, seed: UInt32) -> Float {
+        var h: UInt32 = seed &+ UInt32(bitPattern: Int32(x)) &* 73856093
+                              &+ UInt32(bitPattern: Int32(z)) &* 19349663
+        h = (h ^ (h &>> 13)) &* 1274126177
+        h = h ^ (h &>> 16)
+        return Float(h & 0xFFFFFF) / Float(0xFFFFFF)
+    }
+
+    private func heightAt(_ x: Float, _ z: Float, seed: UInt32) -> Float {
+        let n1 = Noise.value2D(x * 0.015, z * 0.015, seed: seed)
+        let n2 = Noise.value2D(x * 0.04,  z * 0.04,  seed: seed &+ 1) * 0.5
+        let n3 = Noise.value2D(x * 0.10,  z * 0.10,  seed: seed &+ 2) * 0.25
+        let combined: Float = (n1 + n2 + n3) / 1.75
+        // ridged-ish to make hills more distinct
+        let amplified: Float = combined * combined * (combined > 0 ? 1.0 : -1.0)
+        return 26.0 + amplified * 28.0
+    }
+
     func buildMesh(world: World) {
         var verts: [Vertex] = []
-        verts.reserveCapacity(2048)
+        verts.reserveCapacity(4096)
 
         let baseX = Float(coord.x * Chunk.sizeX)
         let baseZ = Float(coord.y * Chunk.sizeZ)
@@ -92,29 +159,31 @@ final class Chunk {
                     let wy = Float(y)
                     let wz = baseZ + Float(z)
 
-                    // For each of 6 faces: check neighbor
-                    // +X
-                    if !world.isOpaque(coord.x * Chunk.sizeX + x + 1, y, coord.y * Chunk.sizeZ + z) {
+                    // For water, only emit the top face (and only if no water above)
+                    if b == .water {
+                        let above = world.blockAt(coord.x * Chunk.sizeX + x, y + 1, coord.y * Chunk.sizeZ + z)
+                        if above == .air {
+                            addFace(&verts, x: wx, y: wy - 0.15, z: wz, face: 2, color: b.color(face: 2))
+                        }
+                        continue
+                    }
+
+                    if !neighborOpaque(x + 1, y, z, world: world) {
                         addFace(&verts, x: wx, y: wy, z: wz, face: 0, color: b.color(face: 0))
                     }
-                    // -X
-                    if !world.isOpaque(coord.x * Chunk.sizeX + x - 1, y, coord.y * Chunk.sizeZ + z) {
+                    if !neighborOpaque(x - 1, y, z, world: world) {
                         addFace(&verts, x: wx, y: wy, z: wz, face: 1, color: b.color(face: 1))
                     }
-                    // +Y (top)
-                    if !world.isOpaque(coord.x * Chunk.sizeX + x, y + 1, coord.y * Chunk.sizeZ + z) {
+                    if !neighborOpaque(x, y + 1, z, world: world) {
                         addFace(&verts, x: wx, y: wy, z: wz, face: 2, color: b.color(face: 2))
                     }
-                    // -Y (bottom)
-                    if y > 0 && !world.isOpaque(coord.x * Chunk.sizeX + x, y - 1, coord.y * Chunk.sizeZ + z) {
+                    if y > 0 && !neighborOpaque(x, y - 1, z, world: world) {
                         addFace(&verts, x: wx, y: wy, z: wz, face: 3, color: b.color(face: 3))
                     }
-                    // +Z
-                    if !world.isOpaque(coord.x * Chunk.sizeX + x, y, coord.y * Chunk.sizeZ + z + 1) {
+                    if !neighborOpaque(x, y, z + 1, world: world) {
                         addFace(&verts, x: wx, y: wy, z: wz, face: 4, color: b.color(face: 4))
                     }
-                    // -Z
-                    if !world.isOpaque(coord.x * Chunk.sizeX + x, y, coord.y * Chunk.sizeZ + z - 1) {
+                    if !neighborOpaque(x, y, z - 1, world: world) {
                         addFace(&verts, x: wx, y: wy, z: wz, face: 5, color: b.color(face: 5))
                     }
                 }
@@ -125,8 +194,14 @@ final class Chunk {
         self.meshDirty = false
     }
 
+    @inline(__always)
+    private func neighborOpaque(_ lx: Int, _ ly: Int, _ lz: Int, world: World) -> Bool {
+        let wx = coord.x * Chunk.sizeX + lx
+        let wz = coord.y * Chunk.sizeZ + lz
+        return world.isOpaque(wx, ly, wz)
+    }
+
     private func addFace(_ verts: inout [Vertex], x: Float, y: Float, z: Float, face: Int, color: Float3) {
-        // Cube corners
         let p000 = Float3(x,     y,     z)
         let p100 = Float3(x + 1, y,     z)
         let p010 = Float3(x,     y + 1, z)
@@ -137,24 +212,12 @@ final class Chunk {
         let p111 = Float3(x + 1, y + 1, z + 1)
 
         switch face {
-        case 0: // +X
-            let n = Float3(1, 0, 0)
-            quad(&verts, p100, p101, p111, p110, n, color)
-        case 1: // -X
-            let n = Float3(-1, 0, 0)
-            quad(&verts, p001, p000, p010, p011, n, color)
-        case 2: // +Y top
-            let n = Float3(0, 1, 0)
-            quad(&verts, p010, p110, p111, p011, n, color)
-        case 3: // -Y bottom
-            let n = Float3(0, -1, 0)
-            quad(&verts, p000, p001, p101, p100, n, color)
-        case 4: // +Z
-            let n = Float3(0, 0, 1)
-            quad(&verts, p101, p001, p011, p111, n, color)
-        case 5: // -Z
-            let n = Float3(0, 0, -1)
-            quad(&verts, p000, p100, p110, p010, n, color)
+        case 0: quad(&verts, p100, p101, p111, p110, Float3(1, 0, 0), color)
+        case 1: quad(&verts, p001, p000, p010, p011, Float3(-1, 0, 0), color)
+        case 2: quad(&verts, p010, p110, p111, p011, Float3(0, 1, 0), color)
+        case 3: quad(&verts, p000, p001, p101, p100, Float3(0, -1, 0), color)
+        case 4: quad(&verts, p101, p001, p011, p111, Float3(0, 0, 1), color)
+        case 5: quad(&verts, p000, p100, p110, p010, Float3(0, 0, -1), color)
         default: break
         }
     }

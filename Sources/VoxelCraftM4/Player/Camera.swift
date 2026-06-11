@@ -2,9 +2,9 @@ import simd
 import Foundation
 
 final class Camera {
-    var position: Float3 = Float3(8, 40, 30)
-    var yaw: Float = 0       // radians, around Y
-    var pitch: Float = -0.3  // radians, around X
+    var position: Float3 = Float3(8, 60, 30)  // start high up so we see the world
+    var yaw: Float = 0
+    var pitch: Float = -0.5  // look down a bit
     var fov: Float = 75 * .pi / 180
     var near: Float = 0.1
     var far: Float = 1000
