@@ -18,6 +18,7 @@ final class Player {
     var onGround: Bool = false
     var flying: Bool = false        // Toggle with F (default off — gravity ON)
     var fallDistance: Float = 0     // Tracks how far we've fallen since leaving ground
+    var walkPhase: Float = 0        // Animation phase 0..2π for limb swing
     static let gravity: Float = 28
     static let jumpSpeed: Float = 9
     static let walkSpeed: Float = 5
@@ -112,13 +113,25 @@ final class Player {
             // Free-fly mode: ignore gravity
             let speed = Player.flySpeed
             position += wishDir * speed * dt
-            velocity = Float3(0, 0, 0)
+            velocity = wishDir * speed   // record so animation works in fly too
+            walkPhase += dt * 8
+            if walkPhase > .pi * 2 { walkPhase -= .pi * 2 }
             return
         }
 
         // --- Horizontal movement ---
         let speed = sprinting ? Player.sprintSpeed : Player.walkSpeed
         let horiz = Float3(wishDir.x, 0, wishDir.z) * speed
+        // Record horizontal velocity (for animation amplitude) — vertical comes from gravity
+        velocity.x = horiz.x
+        velocity.z = horiz.z
+
+        // Advance walk phase based on horizontal speed
+        let hSpeed = simd_length(horiz)
+        if hSpeed > 0.01 {
+            walkPhase += dt * (hSpeed * 1.6 + 2.0)
+            if walkPhase > .pi * 2 { walkPhase -= .pi * 2 }
+        }
 
         // Jump
         if jump && onGround {

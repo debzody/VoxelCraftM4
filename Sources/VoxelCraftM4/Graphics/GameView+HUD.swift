@@ -146,6 +146,24 @@ extension GameView {
             }
         }
 
+        // Big SCORE display (top-left, very visible)
+        let scoreLabelX: Float = -0.97
+        let scoreLabelY: Float = 0.95
+        // Background plate
+        appendQuad(&v, x0: scoreLabelX - 0.01, y0: scoreLabelY - 0.07,
+                   x1: scoreLabelX + 0.36, y1: scoreLabelY + 0.02,
+                   color: SIMD4<Float>(0, 0, 0, 0.65))
+        // "SCORE" letters drawn as colored rect markers + the actual digits
+        // Tag bar (gold)
+        appendQuad(&v, x0: scoreLabelX, y0: scoreLabelY - 0.005,
+                   x1: scoreLabelX + 0.10, y1: scoreLabelY + 0.005,
+                   color: SIMD4<Float>(1.0, 0.85, 0.20, 1.0))
+        // Big number — pixel size 0.008 (much larger than slots)
+        drawNumber(&v, value: quests.totalScore,
+                   xRight: scoreLabelX + 0.34, y: scoreLabelY - 0.06,
+                   pixel: 0.0090,
+                   color: SIMD4<Float>(1.0, 0.95, 0.30, 1.0))
+
         // Quest panel + toast
         appendQuestUI(&v)
 
